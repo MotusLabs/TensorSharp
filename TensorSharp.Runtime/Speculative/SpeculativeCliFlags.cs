@@ -8,6 +8,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using TensorSharp.Runtime.HuggingFace;
 
 namespace TensorSharp.Runtime.Speculative
 {
@@ -207,9 +208,15 @@ namespace TensorSharp.Runtime.Speculative
                 // already attached, so publishing both ways cannot double-load.
                 if (TryReadOption(args, ref i, "--draft-model", out string? draftModelOpt))
                 {
-                    if (string.IsNullOrWhiteSpace(draftModelOpt) || !File.Exists(draftModelOpt))
+                    if (string.IsNullOrWhiteSpace(draftModelOpt))
                         throw new ArgumentException($"--draft-model file not found: '{draftModelOpt}'.");
-                    SetBoth(SpeculationEnvVars.DraftModel, SpeculationEnvVars.LegacyDraftModel, draftModelOpt);
+                    // A value shaped like "<org>/<repo>[:<quant>]" resolves against the
+                    // local Hugging Face cache (the -hf spelling); anything else falls
+                    // through unchanged and keeps the plain-path File.Exists contract.
+                    string draftPath = HfCacheResolver.ResolvePathOrSpec(draftModelOpt);
+                    if (!File.Exists(draftPath))
+                        throw new ArgumentException($"--draft-model file not found: '{draftModelOpt}'.");
+                    SetBoth(SpeculationEnvVars.DraftModel, SpeculationEnvVars.LegacyDraftModel, draftPath);
                     draftModelNamed = true;
                     changed = true;
                     continue;

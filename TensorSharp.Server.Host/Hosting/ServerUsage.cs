@@ -89,9 +89,23 @@ namespace TensorSharp.Server.Host.Hosting
                     "GGUF model to host at startup. Required for inference. Other options can start a model-less " +
                     "status process, but /api/models/load cannot select a GGUF that was not supplied at startup.",
                     "--model C:\\models\\gemma-4-E4B-it-Q8_0.gguf"),
+                new OptionHelp("-hf / --hf-repo <org>/<repo>[:<quant>]",
+                    "Host a model from the local Hugging Face cache instead of a path (mutually exclusive with " +
+                    "--model). Resolves the repo and quant against what is already downloaded — nothing is " +
+                    "fetched from the network; run `hf download <org>/<repo>` first when the repo is missing. " +
+                    "Without a quant tag, Q4_K_M is preferred, then Q8_0, then the first model GGUF cached. A " +
+                    "mmproj projector cached in the same snapshot is picked up automatically unless --mmproj is " +
+                    "given. Default: none.",
+                    "-hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS"),
+                new OptionHelp("--hf-file <path>",
+                    "Exact file name (repo-relative, e.g. sub/dir/model-Q8_0.gguf) to use from the -hf repo, " +
+                    "overriding quant matching. Requires -hf. Default: unused.",
+                    "--hf-file Qwen3.8-27B-A3B-UD-IQ3_XXS.gguf"),
                 new OptionHelp("--mmproj <path|none>",
-                    "Multimodal projector GGUF. A bare filename is resolved next to the model; 'none' disables it. " +
-                    "Requires --model. Default: none — pass the matching projector explicitly.",
+                    "Multimodal projector GGUF. A bare filename is resolved next to the model; 'none' disables it; " +
+                    "an <org>/<repo>[:<quant>] id resolves against the Hugging Face cache. With -hf and no --mmproj, " +
+                    "a projector cached beside the model is picked up automatically. Requires --model. Default: none " +
+                    "— pass the matching projector explicitly.",
                     "--mmproj mmproj-gemma-4-E4B-it-Q8_0.gguf"),
                 new OptionHelp("--embeddings",
                     "Host a GGUF embedding encoder instead of a chat model. Exposes /v1/embeddings, /api/embed, and /api/embeddings. " +

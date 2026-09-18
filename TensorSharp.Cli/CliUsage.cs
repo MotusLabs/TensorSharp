@@ -58,6 +58,19 @@ namespace TensorSharp.Cli
                     "Quantized (e.g. Q8_0, Q4_K_M) and F16/BF16 GGUFs are supported; the architecture is read " +
                     "from the file. Default: none.",
                     "--model gemma-4-E4B-it-Q8_0.gguf"),
+                new OptionHelp("-hf / --hf-repo <org>/<repo>[:<quant>]",
+                    "Load a model from the local Hugging Face cache instead of a path (mutually exclusive with " +
+                    "--model). Resolves the repo and quant against what is already downloaded — nothing is " +
+                    "fetched from the network; run `hf download <org>/<repo>` first when the repo is missing. " +
+                    "Without a quant tag, Q4_K_M is preferred, then Q8_0, then the first model GGUF cached. A " +
+                    "split GGUF resolves to its first shard and the remaining shards load from beside it. A " +
+                    "mmproj projector cached in the same snapshot is picked up automatically unless --mmproj is " +
+                    "given. Default: none.",
+                    "-hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS"),
+                new OptionHelp("--hf-file <path>",
+                    "Exact file name (repo-relative, e.g. sub/dir/model-Q8_0.gguf) to use from the -hf repo, " +
+                    "overriding quant matching. Requires -hf. Default: unused.",
+                    "--hf-file Qwen3.8-27B-A3B-UD-IQ3_XXS.gguf"),
                 new OptionHelp("--input <file>",
                     "UTF-8 text file with the prompt. Default: a built-in demo prompt (\"What is 1+1?\"); when an " +
                     "image/audio/video is attached without --input, a matching \"describe this ...\" prompt is used.",
@@ -277,7 +290,8 @@ namespace TensorSharp.Cli
                 new OptionHelp("--mmproj <path>",
                     "Multimodal projector (vision/audio encoder) GGUF that pairs with the model. Default: " +
                     "auto-detected next to the model for known architectures (Gemma 4, Qwen 3.5, Mistral 3, " +
-                    "Nemotron); pass it explicitly for anything else.",
+                    "Nemotron), beside a -hf model, or inside the named <org>/<repo>[:<quant>] cache repo; " +
+                    "pass it explicitly for anything else.",
                     "--mmproj mmproj-gemma-4-E4B-it-Q8_0.gguf"),
             }),
             ("Compute backend and GPUs", new[]

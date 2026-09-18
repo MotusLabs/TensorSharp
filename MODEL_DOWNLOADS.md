@@ -6,6 +6,19 @@
 
 TensorSharp loads models in GGUF format. Below are verified Hugging Face repos for every supported architecture, including the multimodal-projector (mmproj) and MTP-draft companion files each family uses. Pick a quantization that fits your hardware (Q4_K_M / UD-Q4_K_XL for low memory, Q8_0 for higher quality, etc.). Rows marked *optional* are the speed artifacts — step-distilled checkpoints, distillation LoRAs and speculative-decoding drafters. Nothing breaks without them, but they are usually the difference between minutes and hours, so skim them before you start a long download.
 
+### Run straight from the Hugging Face cache (`-hf`)
+
+The recipes below download with `--local-dir models` and pass explicit paths. If you prefer the Hugging Face client's own cache (`hf download <repo>` with no `--local-dir`, or anything else the `huggingface_hub` Python client fetches), TensorSharp can resolve models there by repo id instead of a path — on both the CLI and the server:
+
+```bash
+hf download unsloth/Qwen3.8-27B-GGUF        # lands in the shared hub cache
+
+dotnet TensorSharp.Cli/bin/TensorSharp.Cli.dll -hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS --input prompt.txt --max-tokens 300 --backend ggml_cuda
+dotnet TensorSharp.Server.Host/bin/TensorSharp.Server.Host.dll -hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS --backend ggml_cuda --port 5000
+```
+
+Nothing is downloaded at run time: a repo or quant that is not cached fails with the exact `hf download <repo>` command to run first. Without a quant tag TensorSharp picks `Q4_K_M`, then `Q8_0`, then the first model GGUF in the repo; split GGUFs resolve to their `-00001-of-` shard. `--hf-file <path>` names an exact repo-relative file instead, `--mmproj` and `--draft-model` accept the same `<org>/<repo>[:<quant>]` spelling, and beside `-hf` a projector cached in the same repo is picked up automatically. The cache root follows the client's documented precedence (`HF_HUB_CACHE` → `HUGGINGFACE_HUB_CACHE` → `HF_HOME/hub` → `XDG_CACHE_HOME/huggingface/hub` → `~/.cache/huggingface/hub`); see the [USAGE tables](USAGE.md#console-application) for the full row.
+
 | Architecture | Model | GGUF Download |
 |---|---|---|
 | Embedding encoder (`bert` / XLM-R) | Snowflake Arctic Embed L v2.0, Q8_0, 1024 dimensions | [fisher046/snowflake-arctic-embed-l-v2.0-Q8_0-GGUF](https://huggingface.co/fisher046/snowflake-arctic-embed-l-v2.0-Q8_0-GGUF), file `snowflake-arctic-embed-l-v2.0-q8_0.gguf`; about 635 MB; use `--embeddings`. Pinned revisions, checksums, and examples: [guide](docs/embeddings.md) |

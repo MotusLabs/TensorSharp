@@ -6,6 +6,19 @@
 
 TensorSharp 使用 GGUF 格式模型文件。以下是各架构对应的已核对 Hugging Face 下载入口与伴随文件。请根据硬件条件选择合适的量化版本（Q4_K_M / UD-Q4_K_XL 适合低内存，Q8_0 适合更高质量等）。标注“可选”的条目是提速用的产物——步数蒸馏 checkpoint、蒸馏 LoRA、推测解码 draft 模型。不下载也能跑通，但它们往往就是“几分钟”和“几小时”的差别，动手前请先扫一眼。
 
+### 直接从 Hugging Face 缓存运行（`-hf`）
+
+下面的示例都用 `--local-dir models` 下载并传显式路径。如果你更习惯 Hugging Face 客户端自己的缓存（不带 `--local-dir` 的 `hf download <repo>`，或 `huggingface_hub` Python 客户端拉取的一切），TensorSharp 也可以按仓库 ID 而不是路径从缓存中解析模型——CLI 与服务器皆可：
+
+```bash
+hf download unsloth/Qwen3.8-27B-GGUF        # 落入共享的 hub 缓存
+
+dotnet TensorSharp.Cli/bin/TensorSharp.Cli.dll -hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS --input prompt.txt --max-tokens 300 --backend ggml_cuda
+dotnet TensorSharp.Server.Host/bin/TensorSharp.Server.Host.dll -hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS --backend ggml_cuda --port 5000
+```
+
+运行时不会联网下载：仓库或量化档不在缓存中时会直接报错，并给出需要先执行的 `hf download <repo>` 命令。不带量化档时按仓库内 `Q4_K_M` → `Q8_0` → 第一个模型 GGUF 的顺序选取；分片 GGUF 解析到 `-00001-of-` 首片。`--hf-file <path>` 可指名仓库内的精确相对路径文件；`--mmproj` 与 `--draft-model` 接受同样的 `<org>/<repo>[:<quant>]` 写法；与 `-hf` 同用时，同一仓库中缓存的投影器会被自动选用。缓存根目录遵循客户端文档中的优先级（`HF_HUB_CACHE` → `HUGGINGFACE_HUB_CACHE` → `HF_HOME/hub` → `XDG_CACHE_HOME/huggingface/hub` → `~/.cache/huggingface/hub`）；完整参数行见 [USAGE 表格](USAGE_zh-cn.md#控制台应用程序)。
+
 | 架构 | 模型 | GGUF 下载 |
 |---|---|---|
 | 嵌入编码器（`bert` / XLM-R） | Snowflake Arctic Embed L v2.0，Q8_0，1024 维 | [fisher046/snowflake-arctic-embed-l-v2.0-Q8_0-GGUF](https://huggingface.co/fisher046/snowflake-arctic-embed-l-v2.0-Q8_0-GGUF)，文件 `snowflake-arctic-embed-l-v2.0-q8_0.gguf`；约 635 MB；使用 `--embeddings`。固定修订版、校验和与示例见[指南](docs/embeddings_zh-cn.md) |
