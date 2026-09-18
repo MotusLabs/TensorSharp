@@ -33,6 +33,7 @@ namespace InferenceWeb.Tests;
 /// and sizes its graph cache from <c>TS_MTP_DRAFT</c> (still read from C++),
 /// both while the model is loading.
 /// </summary>
+[Collection("Hugging Face cache environment")]
 public sealed class SpeculativeCliFlagsTests : IDisposable
 {
     private readonly EnvScope _env = new();
@@ -214,6 +215,37 @@ public sealed class SpeculativeCliFlagsTests : IDisposable
             SpeculativeCliFlags.Apply(new[] { "--draft-model", "/no/such/draft.gguf" }));
 
         Assert.Contains("--draft-model", ex.Message);
+    }
+
+    [Fact]
+    public void Apply_DraftModelAsHfSpec_PublishesTheResolvedCachedPath()
+    {
+        // --draft-model accepts a Hugging Face repo id against the local cache.
+        // The published variable has to be the resolved FILE path: the loader
+        // downstream reads the variable verbatim and knows nothing of specs.
+        string sha = new('0', 40);
+        string cacheRoot = Path.Combine(Path.GetTempPath(), $"ts-hfdraft-tests-{Guid.NewGuid():N}");
+        string snapshotDir = Path.Combine(cacheRoot, "models--acme--DraftGGUF", "snapshots", sha);
+        Directory.CreateDirectory(snapshotDir);
+        Directory.CreateDirectory(Path.Combine(cacheRoot, "models--acme--DraftGGUF", "refs"));
+        File.WriteAllText(Path.Combine(cacheRoot, "models--acme--DraftGGUF", "refs", "main"), sha + "\n");
+        string gguf = Path.Combine(snapshotDir, "Draft-dspark-Q8_0.gguf");
+        File.WriteAllBytes(gguf, new byte[] { 1, 2, 3 });
+        try
+        {
+            _env.Set("HF_HUB_CACHE", cacheRoot);
+            _env.Set("HUGGINGFACE_HUB_CACHE", null);
+            _env.Set("HF_HOME", null);
+
+            Assert.True(SpeculativeCliFlags.Apply(new[] { "--draft-model", "acme/DraftGGUF:dspark" }));
+
+            Assert.Equal(gguf, Environment.GetEnvironmentVariable(SpeculationEnvVars.DraftModel));
+            Assert.Equal(gguf, Environment.GetEnvironmentVariable(SpeculationEnvVars.LegacyDraftModel));
+        }
+        finally
+        {
+            Directory.Delete(cacheRoot, recursive: true);
+        }
     }
 
     [Fact]

@@ -19,6 +19,7 @@ using TensorSharp.AgentHost.CodeExec;
 using TensorSharp.AgentHost.Skills;
 using TensorSharp.Runtime.Scheduling;
 using TensorSharp.Runtime.Speculative;
+using TensorSharp.Runtime.HuggingFace;
 
 namespace TensorSharp.Server.Hosting;
 
@@ -40,6 +41,8 @@ public static class ServerOptionsBuilder
         ParseArgs(args,
             out string? configuredModel,
             out string? configuredMmProj,
+            out string? configuredHfRepo,
+            out string? configuredHfFile,
             out string? configuredBackend,
             out int? configuredMaxTokens,
             out int? configuredVideoFrames,
@@ -55,11 +58,32 @@ public static class ServerOptionsBuilder
             out bool configuredNoWebUi,
             out bool configuredNoPrefixCache);
 
-        if (!string.IsNullOrWhiteSpace(configuredMmProj) && string.IsNullOrWhiteSpace(configuredModel))
+        if (!string.IsNullOrWhiteSpace(configuredMmProj)
+            && string.IsNullOrWhiteSpace(configuredModel)
+            && string.IsNullOrWhiteSpace(configuredHfRepo))
             throw new ArgumentException("--mmproj requires --model.");
+        if (!string.IsNullOrWhiteSpace(configuredHfRepo) && !string.IsNullOrWhiteSpace(configuredModel))
+            throw new ArgumentException(
+                "--model and --hf-repo (-hf) are mutually exclusive; pass the model either as a local path or as a Hugging Face repo id, not both.");
+        if (!string.IsNullOrWhiteSpace(configuredHfFile) && string.IsNullOrWhiteSpace(configuredHfRepo))
+            throw new ArgumentException("--hf-file requires --hf-repo (-hf).");
 
-        string? startupModelPath = ResolveConfiguredModelPath(configuredModel);
+        // A -hf model resolves once, here, against the local Hugging Face cache; the
+        // result is an ordinary local path, so every consumer below (model factory,
+        // prefix-cache key, protocol adapters) needs no knowledge of where it came from.
+        bool modelFromHfCache = !string.IsNullOrWhiteSpace(configuredHfRepo);
+        string? startupModelPath = modelFromHfCache
+            ? HfCacheResolver.ResolveModelPath(configuredHfRepo!, configuredHfFile)
+            : ResolveConfiguredModelPath(configuredModel);
         string? startupMmProjPath = ResolveConfiguredMmProjPath(configuredMmProj, startupModelPath);
+        if (modelFromHfCache && startupMmProjPath is null
+            && !string.Equals(configuredMmProj, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            // No projector named and none cached beside the model is a normal text-only
+            // deployment; FindCompanionPath returning null is that case, not an error.
+            HfCacheResolver.TryParseSpec(configuredHfRepo, out _, out string? hfTag);
+            startupMmProjPath = HfCacheResolver.FindCompanionPath(startupModelPath!, "mmproj", hfTag);
+        }
         bool embeddingsEnabled = args.Any(a => string.Equals(a, "--embeddings", StringComparison.OrdinalIgnoreCase));
         int embeddingThreads = ReadEmbeddingIntOption(args, "--embedding-threads");
         int embeddingContextSize = ReadEmbeddingIntOption(args, "--embedding-context-size");
@@ -262,7 +286,7 @@ public static class ServerOptionsBuilder
     /// <summary>Backend originally requested via <c>--backend</c> / <c>BACKEND</c> (without the OS-default fallback).</summary>
     public static string? ReadConfiguredBackendInput(string[] args)
     {
-        ParseArgs(args, out _, out _, out string? configuredBackend, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _);
+        ParseArgs(args, out _, out _, out _, out _, out string? configuredBackend, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _);
         return configuredBackend ?? Environment.GetEnvironmentVariable("BACKEND");
     }
 
@@ -680,10 +704,15 @@ public static class ServerOptionsBuilder
             // operator never has to know which kind their file is.
             if (SpeculativeCliFlags.TryReadOption(args, ref i, "--draft-model", out string? dsparkOpt))
             {
-                Environment.SetEnvironmentVariable("TS_DSV4_DSPARK", dsparkOpt);
-                Environment.SetEnvironmentVariable("TS_QWEN35_DFLASH", dsparkOpt);
-                Environment.SetEnvironmentVariable("TS_MUSE_GLIMMER_DFLASH", dsparkOpt);
-                Environment.SetEnvironmentVariable("TS_NEMOTRON_DFLASH", dsparkOpt);
+                // SpeculativeCliFlags.Apply already resolved an -hf-style draft spec to
+                // a cached path; these factory-facing variables must carry the resolved
+                // path too, not the raw spec, or the DFlash/DSpark loaders would see a
+                // repo id where they expect a file.
+                string resolvedDraft = HfCacheResolver.ResolvePathOrSpec(dsparkOpt);
+                Environment.SetEnvironmentVariable("TS_DSV4_DSPARK", resolvedDraft);
+                Environment.SetEnvironmentVariable("TS_QWEN35_DFLASH", resolvedDraft);
+                Environment.SetEnvironmentVariable("TS_MUSE_GLIMMER_DFLASH", resolvedDraft);
+                Environment.SetEnvironmentVariable("TS_NEMOTRON_DFLASH", resolvedDraft);
                 changed = true;
             }
         }
@@ -988,6 +1017,8 @@ public static class ServerOptionsBuilder
         string[] args,
         out string? configuredModel,
         out string? configuredMmProj,
+        out string? configuredHfRepo,
+        out string? configuredHfFile,
         out string? configuredBackend,
         out int? configuredMaxTokens,
         out int? configuredVideoFrames,
@@ -1005,6 +1036,8 @@ public static class ServerOptionsBuilder
     {
         configuredModel = null;
         configuredMmProj = null;
+        configuredHfRepo = null;
+        configuredHfFile = null;
         configuredBackend = null;
         configuredMaxTokens = null;
         configuredVideoFrames = null;
@@ -1025,6 +1058,22 @@ public static class ServerOptionsBuilder
             if (TryReadOption(args, ref i, "--model", out string? modelOption))
             {
                 configuredModel = modelOption;
+                continue;
+            }
+
+            // -hf <org>/<repo>[:<quant>] — the llama.cpp-style spelling of --hf-repo;
+            // --hf-file overrides quant matching with an exact cached file name. Both
+            // resolve to a local path in Build.
+            if (TryReadOption(args, ref i, "-hf", out string? hfRepoOption)
+                || TryReadOption(args, ref i, "--hf-repo", out hfRepoOption))
+            {
+                configuredHfRepo = hfRepoOption;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--hf-file", out string? hfFileOption))
+            {
+                configuredHfFile = hfFileOption;
                 continue;
             }
 
@@ -1484,6 +1533,7 @@ public static class ServerOptionsBuilder
             // (appended after this literal) so a new spelling is suggestible
             // the moment it is accepted.
             "--draft-model",
+            "--hf-repo", "--hf-file",
             "--redis-url", "--paged-kv-redis-url", "--paged-kv-redis-ttl",
             "--n-cpu-moe", "--cpu-moe", "--cpu-moe-threads",
             "--qwen-image-vae", "--qwen-image-vl", "--qwen-image-mmproj", "--qwen-image-lora",
@@ -1752,6 +1802,11 @@ public static class ServerOptionsBuilder
 
         if (string.Equals(configuredPath, "none", StringComparison.OrdinalIgnoreCase))
             return null;
+
+        // A projector named by repo id instead of path: an existing file still wins,
+        // so nothing changes for operators who kept a literal path.
+        if (HfCacheResolver.LooksLikeHfSpec(configuredPath) && !File.Exists(configuredPath))
+            return HfCacheResolver.ResolveCompanionPath(configuredPath, "mmproj");
 
         if (Path.IsPathRooted(configuredPath) ||
             configuredPath.Contains(Path.DirectorySeparatorChar) ||

@@ -249,6 +249,8 @@ dotnet TensorSharp.Cli/bin/TensorSharp.Cli.dll --model <model.gguf> --backend cu
 | 参数 | 说明 |
 |---|---|
 | `--model <path>` | GGUF 模型文件路径（必填） |
+| `-hf <org>/<repo>[:<quant>]` / `--hf-repo <org>/<repo>[:<quant>]` | 按仓库 ID 从本地 Hugging Face hub 缓存解析模型，而不是给路径——例如 `-hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS`。与 `--model` 互斥；从不联网下载，仓库或量化档不在缓存中时会直接报错，并给出需要先执行的 `hf download <repo>` 命令。不带量化档时按 `Q4_K_M` → `Q8_0` → 第一个模型 GGUF 的顺序回退；分片 GGUF 选中 `-00001-of-` 首片后其余分片自动加载。缓存根目录遵循官方客户端的优先级：`HF_HUB_CACHE` → `HUGGINGFACE_HUB_CACHE` → `HF_HOME/hub` → `XDG_CACHE_HOME/huggingface/hub` → `~/.cache/huggingface/hub` |
+| `--hf-file <path>` | `-hf` / `--hf-repo` 缓存仓库内的精确相对路径文件（如 `UD-Q2_K_XL/model-00001-of-00003.gguf`），取代量化匹配 |
 | `--input <path>` | 包含用户提示词的文本文件 |
 | `--input-jsonl <path>` | JSONL 批量请求文件（每行一个 JSON） |
 | `--multi-turn-jsonl <path>` | 用于多轮对话模拟（含 KV 缓存复用）的 JSONL 文件 |
@@ -257,7 +259,7 @@ dotnet TensorSharp.Cli/bin/TensorSharp.Cli.dll --model <model.gguf> --backend cu
 | `--video <path>` | 用于视频推理的视频文件 |
 | `--audio <path>` | 音频文件（WAV、MP3、OGG）用于音频推理 |
 | `--pdf <path>` | PDF 文档输入（单次推理模式）。文字型 PDF 会提取并内联完整文本层（页数上限由 `TS_PDF_MAX_PAGES` 控制）；扫描型 PDF 会栅格化为页面图像，并需要视觉模型（`--mmproj` 或内置视觉编码器）。`--input` 文本作为针对文档的指令。 |
-| `--mmproj <path>` | 多模态投影器 GGUF 文件路径 |
+| `--mmproj <path>` | 多模态投影器 GGUF 文件路径。也接受 `<org>/<repo>[:<quant>]` 形式的 Hugging Face 缓存仓库 ID；与 `-hf` 同用时若省略，会自动选用同一仓库中缓存的投影器（`--mmproj none` 可显式关闭）。 |
 | `--max-tokens <N>` | 最大生成 token 数（默认：100） |
 | `--backend <type>` | 计算后端：`cpu`、`cuda`、`mlx`、`ggml_cpu`、`ggml_metal`、`ggml_cuda` 或 `ggml_vulkan` |
 | `--gpu-device <N>` | `ggml_vulkan` 后端使用的 Vulkan 设备索引，用于多 GPU 主机（例如同时装有 Intel 集成显卡和 NVIDIA 独立显卡的机器）。默认使用设备 0；可用 `--list-gpus` 查看索引。也可通过环境变量 `TS_GGML_VULKAN_DEVICE` 设置。 |
@@ -552,7 +554,9 @@ dotnet TensorSharp.Server.Host/bin/TensorSharp.Server.Host.dll --config config/s
 | 参数 | 说明 |
 |---|---|
 | `--model <path>` | 需要托管的 GGUF 文件（推理时必填；如传入了其他参数但未指定该项，服务仍可启动，但 `/api/models/load` 会报告未加载模型） |
-| `--mmproj <path>` | 多模态投影器 GGUF（仅给文件名时按模型目录解析；传 `none` 可显式禁用）。需要先指定 `--model`。 |
+| `-hf <org>/<repo>[:<quant>]` / `--hf-repo <org>/<repo>[:<quant>]` | 按仓库 ID 从本地 Hugging Face hub 缓存解析要托管的模型，而不是给路径——例如 `-hf unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS`。仅读取缓存：从不联网下载，仓库或量化档不在缓存中时启动失败，并给出需要先执行的 `hf download <repo>` 命令。量化回退与缓存根目录发现与 CLI 同名参数一致；与 `--model` 互斥 |
+| `--hf-file <path>` | `-hf` / `--hf-repo` 缓存仓库内的精确相对路径文件，取代量化匹配 |
+| `--mmproj <path>` | 多模态投影器 GGUF（仅给文件名时按模型目录解析；传 `none` 可显式禁用）。也接受 `<org>/<repo>[:<quant>]` 形式的缓存仓库 ID；与 `-hf` 同用且未指名投影器时，会自动选用同一仓库中缓存的投影器。需要先指定 `--model` 或 `-hf`。 |
 | `--backend <type>` | 默认计算后端：`cpu`、`cuda`、`mlx`、`ggml_cpu`、`ggml_metal`、`ggml_cuda` 或 `ggml_vulkan` |
 | `--tp <N>` | 多卡度 —— 把托管的模型摊到本机几张 GPU 上（默认：`1`）。架构实现了张量并行就走张量并行；Qwen 3.8 Flash Next（`qwen4exp`）与 DeepSeek V4 走按层切分（整层落在单卡 —— 买的是容量，不是速度）。GLM 5.x 不传此参数时按层切分；在 GGML GPU 后端上，传入它则为 GLM-5.2、GLM-5.3 与 GLM-5.3-Flash 一律选择原生本地单进程 TP（在 GLM-5.3 上这只是一个被接受的模式，而不是已验证的配置——各 rank 会复制 cache，因此 `--tp` 会成倍放大 KV 占用）。需要 `--backend cuda`、`ggml_cuda` 或 `ggml_vulkan`。环境变量：`TENSORSHARP_TP_DEGREE`。详见[张量并行与分布式推理](#张量并行与分布式推理)。 |
 | `--tp-node-id <N>` | 多节点（分布式）张量并行中本节点的 0 起始编号。服务端只能是节点 `0`（对外提供 HTTP 的 driver）；其余节点请用 `TensorSharp.Cli` 启动。必须与 `--tp-peers` 一起使用。环境变量：`TENSORSHARP_TP_NODE_ID`。 |
@@ -647,7 +651,7 @@ Unix IPC 并非完整隔离边界：macOS 为兼容性保留共享临时目录�
 | `--spec-type <name>` | 投机算法：`auto`（默认）/ `draft-head` / `block` / `ngram`。`ngram` 不需要任何训练权重，对所有模型都能用——它在上文里找最近几个 token 曾经出现过的位置，把当时紧随其后的内容拿来当草稿，因此凡是答案大量引用输入的场景都很强。环境变量：`TS_SPEC_TYPE`。 |
 | `--spec-draft <N>` | 每个投机步最多起草的 token 数（默认 `8`；块级草稿器会把它夹到自己训练时的块大小以内，在那里默认也是该块大小）。在 GGML 后端上对 Qwen 3.5 显式传入的值请保持 7 或更小——九行验证批是一个已知的正确性缺陷。环境变量：`TS_SPEC_DRAFT`（或 `TS_MTP_DRAFT`）。 |
 | `--spec-pmin <f>` | 草稿置信度门限，取值 `[0, 1]`；遇到第一个低于该值的 token 即停止起草，`0` 表示从不设门限。默认值按算法选择：逐 token 草稿头为 `0.15`（其 top-10 logits 上的 top-1 概率），块级草稿器为 `0.35`——后者的门限是**累积**前缀概率，因此同一个数字要严格得多，n-gram 为 `0`。环境变量：`TS_SPEC_PMIN`（或 `TS_MTP_PMIN`）。 |
-| `--draft-model <path>` | 投机解码草稿模型，适用于所有以独立文件发布的草稿器：DeepSeek V4 的 DSpark 支持 GGUF（见 [DeepSeek V4](docs/models/deepseek4_zh-cn.md#dspark-投机解码)）、Muse-Glimmer 的 DFlash 与 Qwen 3.8 的 DFlash2 块级草稿器（见 [Muse-Glimmer](docs/models/muse-glimmer_zh-cn.md)，环境变量 `TS_MUSE_GLIMMER_DFLASH`），以及 Gemma 4 的 `gemma4-assistant` 逐 token 草稿头。文件自己的 `general.architecture` 决定它如何加载——操作者从不需要挑选机制；在这里给出文件本身就会启用投机，不需要再加 `--spec`，显式的 `--no-spec` 则会否决它。草稿的隐藏维度必须与目标一致（例如 12B 目标配 12B 草稿，而非 26B-A4B 草稿）；草稿不匹配或不完整会在启动时立即失败并给出修复提示。Qwen 3.6、GLM 5.2 与 GLM-5.3 将 NextN 块内嵌在主干 GGUF 中，不需要这个参数——它们用 `--spec`。块级草稿器每步起草一整块 token，主干用一次批量前向验证，因此贪心输出保持不变（浮点近平局处除外，见[贪心一致性的实际含义](docs/speculative_decoding.md#what-greedy-parity-delivers)）；在 `cuda` 与 `ggml_cuda` 后端上对单序列请求生效。服务端的每一行验证都用该请求自己的采样器，因此可与任意采样设置组合。环境变量：`TS_SPEC_DRAFT_MODEL`（旧写法 `TS_MTP_DRAFT_MODEL`）、`TS_DSV4_DSPARK`。**Nemotron-H 会拒绝：**显式的 `--draft-model`（例如 Nemotron 3.5 Lightning 的 DSpark GGUF）会让服务器启动失败，报出模型给出的原因并提示去掉该参数；`--spec`/`--spec-type ngram` 也只提供普通解码并打印一次警告，因为该主干的 verify 与 decode 内核结果不一致，投机会改变输出（见 [投机解码](docs/speculative_decoding.md#nemotron-h-refuses-speculation)）。 |
+| `--draft-model <path>` | 投机解码草稿模型，适用于所有以独立文件发布的草稿器：DeepSeek V4 的 DSpark 支持 GGUF（见 [DeepSeek V4](docs/models/deepseek4_zh-cn.md#dspark-投机解码)）、Muse-Glimmer 的 DFlash 与 Qwen 3.8 的 DFlash2 块级草稿器（见 [Muse-Glimmer](docs/models/muse-glimmer_zh-cn.md)，环境变量 `TS_MUSE_GLIMMER_DFLASH`），以及 Gemma 4 的 `gemma4-assistant` 逐 token 草稿头。文件自己的 `general.architecture` 决定它如何加载——操作者从不需要挑选机制；在这里给出文件本身就会启用投机，不需要再加 `--spec`，显式的 `--no-spec` 则会否决它。该值也可以是 `<org>/<repo>[:<quant>]` 形式的 Hugging Face 缓存仓库 ID，而不只是路径。草稿的隐藏维度必须与目标一致（例如 12B 目标配 12B 草稿，而非 26B-A4B 草稿）；草稿不匹配或不完整会在启动时立即失败并给出修复提示。Qwen 3.6、GLM 5.2 与 GLM-5.3 将 NextN 块内嵌在主干 GGUF 中，不需要这个参数——它们用 `--spec`。块级草稿器每步起草一整块 token，主干用一次批量前向验证，因此贪心输出保持不变（浮点近平局处除外，见[贪心一致性的实际含义](docs/speculative_decoding.md#what-greedy-parity-delivers)）；在 `cuda` 与 `ggml_cuda` 后端上对单序列请求生效。服务端的每一行验证都用该请求自己的采样器，因此可与任意采样设置组合。环境变量：`TS_SPEC_DRAFT_MODEL`（旧写法 `TS_MTP_DRAFT_MODEL`）、`TS_DSV4_DSPARK`。**Nemotron-H 会拒绝：**显式的 `--draft-model`（例如 Nemotron 3.5 Lightning 的 DSpark GGUF）会让服务器启动失败，报出模型给出的原因并提示去掉该参数；`--spec`/`--spec-type ngram` 也只提供普通解码并打印一次警告，因为该主干的 verify 与 decode 内核结果不一致，投机会改变输出（见 [投机解码](docs/speculative_decoding.md#nemotron-h-refuses-speculation)）。 |
 | `--paged-kv` / `--no-paged-kv` | 已移除的按会话分页 KV 管理器的兼容参数。当前服务端 KV 状态由引擎持有；请使用连续批处理 / `TS_SCHED_*` 开关调节引擎。别名：`--paged-kv-cache` / `--no-paged-kv-cache`。 |
 | `--paged-kv-block-size <N>` | 旧的独立分页 KV 块大小。当前引擎使用 `TS_SCHED_BLOCK_SIZE`。 |
 | `--paged-kv-ram-mb <N>` | 旧的独立分页 KV RAM 层上限。 |

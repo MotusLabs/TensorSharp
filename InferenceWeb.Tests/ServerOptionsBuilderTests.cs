@@ -19,9 +19,11 @@ namespace InferenceWeb.Tests;
 /// <summary>
 /// Verifies that the server's CLI argument parser surfaces the new sampling
 /// flags (and that env-var fallbacks layer correctly under the CLI overrides).
-/// We isolate environment-variable mutation per test using a tiny RAII helper
-/// so the tests are safe to run in parallel with the rest of the suite.
+/// We isolate environment-variable mutation per test using a tiny RAII helper;
+/// the -hf tests also set HF_HUB_CACHE, a process-wide variable, so the whole
+/// class joins the non-parallelizing cache collection.
 /// </summary>
+[Collection("Hugging Face cache environment")]
 public class ServerOptionsBuilderTests : IDisposable
 {
     private readonly string _baseDir;
@@ -520,7 +522,7 @@ public class ServerOptionsBuilderTests : IDisposable
         // usage page, with defaults and an example per option.
         string[] flags =
         {
-            "--model", "--mmproj", "--backend", "--gpu-device", "--list-gpus",
+            "--model", "--mmproj", "--hf-repo", "--hf-file", "--backend", "--gpu-device", "--list-gpus",
             "--tp", "--tp-node-id", "--tp-peers",
             "--max-tokens", "--temperature", "--top-k", "--top-p", "--min-p",
             "--video-frames", "--fps",
@@ -1605,6 +1607,123 @@ public class ServerOptionsBuilderTests : IDisposable
         Assert.False(
             ex is ArgumentException ae && ae.Message.StartsWith("Unknown option", StringComparison.Ordinal),
             "config-file spec keys were rejected: " + ex?.Message);
+    }
+
+    // ---- -hf / Hugging Face cache model source ----
+
+    private string CacheHfRepo(string repoName, params string[] snapshotFiles)
+    {
+        string sha = new('0', 40);
+        string repoDir = Path.Combine(_baseDir, "hub", "models--acme--" + repoName);
+        string snapshotDir = Path.Combine(repoDir, "snapshots", sha);
+        Directory.CreateDirectory(snapshotDir);
+        Directory.CreateDirectory(Path.Combine(repoDir, "blobs"));
+        Directory.CreateDirectory(Path.Combine(repoDir, "refs"));
+        File.WriteAllText(Path.Combine(repoDir, "refs", "main"), sha + "\n");
+        foreach (string file in snapshotFiles)
+        {
+            string path = Path.Combine(snapshotDir, file.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "stub");
+        }
+        // Point the documented variable at the cache and clear its competitors so
+        // the precedence being exercised is the one this test set up.
+        _env.Set("HF_HUB_CACHE", Path.Combine(_baseDir, "hub"));
+        _env.Set("HUGGINGFACE_HUB_CACHE", null);
+        _env.Set("HF_HOME", null);
+        return snapshotDir;
+    }
+
+    [Fact]
+    public void Build_HfRepo_ResolvesToACachedGgufPath()
+    {
+        CacheHfRepo("ModelGGUF", "Model-UD-IQ3_XXS.gguf", "Model-Q8_0.gguf");
+
+        var tagged = ServerOptionsBuilder.Build(
+            new[] { "-hf", "acme/ModelGGUF:UD-IQ3_XXS", "--backend", "ggml_cpu" }, _baseDir);
+        Assert.EndsWith("Model-UD-IQ3_XXS.gguf", tagged.StartupModelPath, StringComparison.Ordinal);
+
+        // Untagged, nothing matches the Q4_K_M default, so the Q8_0 fallback wins.
+        var fallback = ServerOptionsBuilder.Build(
+            new[] { "-hf", "acme/ModelGGUF:Q8_0", "--backend", "ggml_cpu" }, _baseDir);
+        Assert.EndsWith("Model-Q8_0.gguf", fallback.StartupModelPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_HfFile_PicksTheNamedFileInsideTheCachedRepo()
+    {
+        CacheHfRepo("NestedGGUF", "nested/dir/Model-F16.gguf", "Model-Q8_0.gguf");
+
+        var options = ServerOptionsBuilder.Build(
+            new[] { "--hf-repo", "acme/NestedGGUF", "--hf-file", "nested/dir/Model-F16.gguf", "--backend", "ggml_cpu" },
+            _baseDir);
+
+        Assert.EndsWith(Path.Combine("nested", "dir", "Model-F16.gguf"), options.StartupModelPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_Model_And_HfRepo_AreMutuallyExclusive()
+    {
+        CacheHfRepo("ModelGGUF", "Model-Q8_0.gguf");
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => ServerOptionsBuilder.Build(
+            new[] { "--model", "local.gguf", "-hf", "acme/ModelGGUF" }, _baseDir));
+        Assert.Contains("mutually exclusive", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_HfFile_WithoutHfRepo_IsRejected()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            ServerOptionsBuilder.Build(new[] { "--hf-file", "Model-Q8_0.gguf" }, _baseDir));
+        Assert.Contains("--hf-file requires --hf-repo", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_HfRepo_AutoDiscoversAProjectorCachedBesideTheModel()
+    {
+        CacheHfRepo("VisionGGUF", "Model-Q8_0.gguf", "mmproj-Model-F16.gguf");
+
+        var options = ServerOptionsBuilder.Build(
+            new[] { "-hf", "acme/VisionGGUF:Q8_0", "--backend", "ggml_cpu" }, _baseDir);
+
+        Assert.EndsWith("Model-Q8_0.gguf", options.StartupModelPath, StringComparison.Ordinal);
+        Assert.NotNull(options.StartupMmProjPath);
+        Assert.EndsWith("mmproj-Model-F16.gguf", options.StartupMmProjPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_HfRepo_TextOnlyRepo_StartsWithoutAProjector()
+    {
+        CacheHfRepo("TextOnlyGGUF", "Model-Q8_0.gguf");
+
+        var options = ServerOptionsBuilder.Build(
+            new[] { "-hf", "acme/TextOnlyGGUF:Q8_0", "--backend", "ggml_cpu" }, _baseDir);
+
+        Assert.Null(options.StartupMmProjPath);
+    }
+
+    [Fact]
+    public void Build_HfRepo_MmprojNone_SuppressesDiscovery()
+    {
+        CacheHfRepo("VisionGGUF", "Model-Q8_0.gguf", "mmproj-Model-F16.gguf");
+
+        var options = ServerOptionsBuilder.Build(
+            new[] { "-hf", "acme/VisionGGUF:Q8_0", "--mmproj", "none", "--backend", "ggml_cpu" }, _baseDir);
+
+        Assert.Null(options.StartupMmProjPath);
+    }
+
+    [Fact]
+    public void Build_HfRepo_MissingRepo_NamesTheRepoAndTheDownloadCommand()
+    {
+        CacheHfRepo("ModelGGUF", "Model-Q8_0.gguf");
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            ServerOptionsBuilder.Build(new[] { "-hf", "acme/MissingGGUF" }, _baseDir));
+
+        Assert.Contains("acme/MissingGGUF", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("hf download acme/MissingGGUF", ex.Message, StringComparison.Ordinal);
     }
 
 }

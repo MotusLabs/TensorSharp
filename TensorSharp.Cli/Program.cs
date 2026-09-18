@@ -29,6 +29,7 @@ using TensorSharp.AgentHost.CodeExec;
 using TensorSharp.AgentHost.Skills;
 using TensorSharp.Runtime.Scheduling;
 using TensorSharp.Runtime.Speculative;
+using TensorSharp.Runtime.HuggingFace;
 
 namespace TensorSharp.Cli
 {
@@ -236,6 +237,11 @@ namespace TensorSharp.Cli
             SpeculativeCliFlags.Apply(args);
 
             string modelPath = null;
+            // -hf <org>/<repo>[:<quant>] resolves against the local Hugging Face cache
+            // after the switch; --hf-file pins the exact cached file, overriding quant
+            // matching. Mutually exclusive with --model, as on the server.
+            string hfRepoSpec = null;
+            string hfFileSpec = null;
             string inputFile = null;
             string pdfPath = null;
             string outputFile = null;
@@ -346,6 +352,9 @@ namespace TensorSharp.Cli
                 switch (args[i])
                 {
                     case "--model": modelPath = args[++i]; break;
+                    case "-hf":
+                    case "--hf-repo": hfRepoSpec = args[++i]; break;
+                    case "--hf-file": hfFileSpec = args[++i]; break;
                     case "--input": inputFile = args[++i]; break;
                     case "--pdf": pdfPath = args[++i]; break;
                     case "--input-jsonl": inputJsonl = args[++i]; break;
@@ -380,8 +389,14 @@ namespace TensorSharp.Cli
                     case "--offload-cpu": offloadCpu = true; break;
                     case "--audio": audioPath = args[++i]; break;
                     case "--video": videoPath = args[++i]; break;
-                    case "--mmproj": mmProjPath = args[++i]; break;
-                    case "--draft-model": draftModelPath = args[++i]; break;
+                    case "--mmproj":
+                        mmProjPath = args[++i];
+                        // A repo id instead of a path: resolve against the HF cache; an
+                        // existing file always wins so plain paths behave exactly as before.
+                        if (HfCacheResolver.LooksLikeHfSpec(mmProjPath) && !File.Exists(mmProjPath))
+                            mmProjPath = HfCacheResolver.ResolveCompanionPath(mmProjPath, "mmproj");
+                        break;
+                    case "--draft-model": draftModelPath = HfCacheResolver.ResolvePathOrSpec(args[++i]); break;
                     case "--max-tokens": maxTokens = int.Parse(args[++i]); break;
                     case "--test": runTest = true; break;
                     case "--backend": backendStr = args[++i].ToLowerInvariant(); break;
@@ -700,6 +715,27 @@ namespace TensorSharp.Cli
             {
                 TestChatTemplates(testTemplatesDir);
                 return;
+            }
+
+            // -hf resolution happens once, before the built-in default-model fallback,
+            // so an explicitly requested cache repo always beats the bundled candidate.
+            if (hfRepoSpec != null)
+            {
+                if (modelPath != null)
+                    throw new ArgumentException(
+                        "--model and --hf-repo (-hf) are mutually exclusive; pass the model either as a local path or as a Hugging Face repo id, not both.");
+                if (hfFileSpec != null && string.IsNullOrWhiteSpace(hfFileSpec))
+                    throw new ArgumentException("--hf-file requires a file name.");
+                modelPath = HfCacheResolver.ResolveModelPath(hfRepoSpec, hfFileSpec);
+
+                // Same auto-discovery the server does: a projector cached beside the
+                // model is picked up unless the operator named one (or said "none",
+                // which reaches here as the literal string, not null).
+                if (mmProjPath == null)
+                {
+                    HfCacheResolver.TryParseSpec(hfRepoSpec, out _, out string? hfTag);
+                    mmProjPath = HfCacheResolver.FindCompanionPath(modelPath, "mmproj", hfTag);
+                }
             }
 
             if (modelPath == null)
