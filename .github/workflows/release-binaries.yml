@@ -5,10 +5,10 @@ name: Release Binaries
 # (TensorSharp.Server.Host and TensorSharp.Cli) for each supported platform and
 # attaches them to a GitHub Release.
 #
-# Unlike `publish-nuget.yml` (which packs managed-only NuGet packages and skips
-# the native build), this workflow builds the native libraries on each OS and
-# bundles them into the published apps, so each archive is runnable without a
-# .NET install or a separate native build:
+# Unlike the managed-only NuGet packages (which are packed without any native
+# build), this workflow builds the native libraries on each OS and bundles them
+# into the published apps, so each archive is runnable without a .NET install
+# or a separate native build:
 #
 #   - win-x64-cpu      GgmlOps.dll (CPU)                       -> .zip
 #   - win-x64-cuda     GgmlOps.dll (+CUDA) + PTX + CUDA redist -> .zip

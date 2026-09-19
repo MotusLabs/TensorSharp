@@ -548,11 +548,11 @@ TensorSharp/
 
 The repository is split along package boundaries so consumers can depend on only the layers they actually need.
 
-**Status verified 2026-09-08.** The publish set is **thirteen** packages — every row of the table below. `eng/verify-packages.ps1` is the authoritative list, and it gates the publish workflow, so adding a `ProjectReference` between two packable projects without updating that script fails the release.
+**Status verified 2026-09-08.** The publish set is **thirteen** packages — every row of the table below. `eng/verify-packages.ps1` is the authoritative list, so adding a `ProjectReference` between two packable projects without updating that script fails the pack verification.
 
 What is on [NuGet.org](https://www.nuget.org/profiles/TensorSharp) today is a subset: **eight** ids at version **3.1.2**, published 2026-07-21 — `TensorSharp.Tensors`, `TensorSharp.Runtime`, `TensorSharp.Models`, `TensorSharp.Backends.GGML`, `TensorSharp.Backends.Cuda`, `TensorSharp.Backends.MLX`, `TensorSharp.Server`, and `TensorSharp.Cli`. Those packages lag the current source and the v3.3.0.0 application release; in particular the published `TensorSharp.Server` predates the logging and chat splits, so it does not match the layering described here.
 
-The remaining five — `TensorSharp.Runtime.Logging`, `TensorSharp.AgentHost`, `TensorSharp.Chat`, `TensorSharp.Server.Host`, and `TensorSharp.Distributed` — are packable and verified but have never been pushed; they ship with the next version tag. Until then, consumers of those layers need project references from a source checkout.
+The remaining five — `TensorSharp.Runtime.Logging`, `TensorSharp.AgentHost`, `TensorSharp.Chat`, `TensorSharp.Server.Host`, and `TensorSharp.Distributed` — are packable and verified but have never been pushed. Until a publish channel is re-established, consumers of those layers need project references from a source checkout.
 
 | Project | NuGet package | Public namespace | Responsibility |
 |---|---|---|---|
@@ -586,19 +586,13 @@ The verifier runs `dotnet pack` for the public packages above and fails if an in
 
 ### Publishing a package release (maintainers)
 
-The [`Publish NuGet`](.github/workflows/publish-nuget.yml) workflow packs the public projects above on a version tag and pushes them to NuGet.org and GitHub Packages. This describes the release process, not current package availability:
+CI no longer publishes NuGet packages: the `publish-nuget.yml` workflow was removed, so version tags trigger only the binary release workflow and nothing is pushed to NuGet.org or GitHub Packages. To pack the public packages locally — managed-only, the native GGML/CUDA/MLX libraries are not embedded — and validate metadata and dependency boundaries:
 
-```bash
-git tag vX.Y.Z.W      # the tag drives package version X.Y.Z.W
-git push origin vX.Y.Z.W
+```powershell
+pwsh ./eng/verify-packages.ps1
 ```
 
-- The tag (with the leading `v` stripped) overrides `TensorSharpVersion` for every package, so all packages ship with a single coordinated version. You do not need to edit `Directory.Build.props` first.
-- Packing is managed-only — the native GGML/CUDA/MLX libraries are not embedded in the packages — so the workflow runs on a stock runner with `eng/verify-packages.ps1 -SkipNativeBuild` (which also sets `TensorSharpSkipGgmlNative=true` / `TensorSharpSkipMlxNative=true`).
-- NuGet.org publishing uses [Trusted Publishing](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing) (OIDC) — there is no API key secret to manage. `NuGet/login@v1` exchanges the job's GitHub OIDC token for a key valid for one hour. The policy on nuget.org pins the repository owner, repository, workflow **file name** (`publish-nuget.yml`), and the `production` environment, so renaming this workflow file, or removing `environment: production` from the job, breaks publishing until the policy is updated to match.
-- Packages are pushed individually rather than by glob: a package id owned by a different NuGet.org account returns 403, which `--skip-duplicate` does *not* absorb, so the run reports exactly which packages were rejected instead of stopping at the first one.
-- Packages ship with Source Link and a companion `.snupkg` symbol package. `ContinuousIntegrationBuild` is set only under GitHub Actions, so local packs keep their normal source paths.
-- To rehearse without publishing, run the workflow manually (`workflow_dispatch`) with a `version` input and `dry_run` checked — it packs, verifies, and uploads the `.nupkg` files as a build artifact without pushing.
+`ContinuousIntegrationBuild` is set only under GitHub Actions, so local packs keep their normal source paths.
 
 ### Platform binary release status
 
