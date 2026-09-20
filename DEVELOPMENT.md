@@ -552,7 +552,7 @@ The repository is split along package boundaries so consumers can depend on only
 
 What is on [NuGet.org](https://www.nuget.org/profiles/TensorSharp) today is a subset: **eight** ids at version **3.1.2**, published 2026-07-21 — `TensorSharp.Tensors`, `TensorSharp.Runtime`, `TensorSharp.Models`, `TensorSharp.Backends.GGML`, `TensorSharp.Backends.Cuda`, `TensorSharp.Backends.MLX`, `TensorSharp.Server`, and `TensorSharp.Cli`. Those packages lag the current source and the v3.3.0.0 application release; in particular the published `TensorSharp.Server` predates the logging and chat splits, so it does not match the layering described here.
 
-The remaining five — `TensorSharp.Runtime.Logging`, `TensorSharp.AgentHost`, `TensorSharp.Chat`, `TensorSharp.Server.Host`, and `TensorSharp.Distributed` — are packable and verified but have never been pushed. Until a publish channel is re-established, consumers of those layers need project references from a source checkout.
+The remaining five — `TensorSharp.Runtime.Logging`, `TensorSharp.AgentHost`, `TensorSharp.Chat`, `TensorSharp.Server.Host`, and `TensorSharp.Distributed` — are packable and verified but have never been pushed to any feed; they ship with the next version tag. Until then, consumers of those layers need project references from a source checkout.
 
 | Project | NuGet package | Public namespace | Responsibility |
 |---|---|---|---|
@@ -586,13 +586,33 @@ The verifier runs `dotnet pack` for the public packages above and fails if an in
 
 ### Publishing a package release (maintainers)
 
-CI no longer publishes NuGet packages: the `publish-nuget.yml` workflow was removed, so version tags trigger only the binary release workflow and nothing is pushed to NuGet.org or GitHub Packages. To pack the public packages locally — managed-only, the native GGML/CUDA/MLX libraries are not embedded — and validate metadata and dependency boundaries:
+The [`Publish GitHub Packages`](.github/workflows/publish-github-packages.yml) workflow packs the public projects above and pushes them to the organization's GitHub Packages NuGet feed. Nothing is pushed to NuGet.org from CI. Trigger it by pushing a version tag — the tag (leading `v` stripped) overrides `TensorSharpVersion` for every package, so all packages ship with a single coordinated version — or manually via `workflow_dispatch`, which accepts an explicit `version` and a `dry_run` rehearsal that packs and verifies without pushing:
+
+```bash
+git tag vX.Y.Z.W
+git push origin vX.Y.Z.W
+```
+
+Packing is managed-only — the native GGML/CUDA/MLX libraries are not embedded in the packages — and is gated by `eng/verify-packages.ps1 -SkipNativeBuild`. Authentication uses the workflow's own `GITHUB_TOKEN` with `packages: write`; there are no external accounts or API keys. GitHub Packages does not accept symbol packages, so only `.nupkg` files are pushed and `.snupkg` remain available as workflow artifacts. `ContinuousIntegrationBuild` is set only under GitHub Actions, so local packs keep their normal source paths.
+
+Packages land at `https://nuget.pkg.github.com/MotusLabs/index.json`. New packages are private by default; an org admin can make them public in the organization's Packages settings. To consume the feed, configure a NuGet source with a classic PAT that has `read:packages` (GitHub Packages' NuGet feed requires authenticated restore even for public packages):
+
+```bash
+dotnet nuget add source \
+  --username <github-username> \
+  --password <ghp_...> \
+  --store-password-in-clear-text \
+  --name motuslabs \
+  "https://nuget.pkg.github.com/MotusLabs/index.json"
+
+dotnet add package TensorSharp.Tensors
+```
+
+To validate package metadata and README dependency boundaries without publishing:
 
 ```powershell
 pwsh ./eng/verify-packages.ps1
 ```
-
-`ContinuousIntegrationBuild` is set only under GitHub Actions, so local packs keep their normal source paths.
 
 ### Platform binary release status
 
