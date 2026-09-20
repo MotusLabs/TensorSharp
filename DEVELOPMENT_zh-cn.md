@@ -358,11 +358,11 @@ TensorSharp/
 
 仓库按包边界拆成独立层，使用者可以只引用真正需要的部分。
 
-**状态核验于 2026-09-08。** 发布集合共 **13** 个包，即下表的每一行。`eng/verify-packages.ps1` 是这份清单的权威来源，并且它是发布流水线的门禁：在两个可打包项目之间新增 `ProjectReference` 而不同步更新该脚本，会直接让发布失败。
+**状态核验于 2026-09-08。** 发布集合共 **13** 个包，即下表的每一行。`eng/verify-packages.ps1` 是这份清单的权威来源：在两个可打包项目之间新增 `ProjectReference` 而不同步更新该脚本，会直接让打包校验失败。
 
 当前真正发布到 [NuGet.org](https://www.nuget.org/profiles/TensorSharp) 的只是其中一个子集：**8** 个包 ID，版本 **3.1.2**，发布于 2026-07-21——`TensorSharp.Tensors`、`TensorSharp.Runtime`、`TensorSharp.Models`、`TensorSharp.Backends.GGML`、`TensorSharp.Backends.Cuda`、`TensorSharp.Backends.MLX`、`TensorSharp.Server` 与 `TensorSharp.Cli`。它们落后于当前源码与 v3.3.0.0 应用发行版；尤其是已发布的 `TensorSharp.Server` 早于日志层与聊天层拆分，与这里描述的分层并不一致。
 
-其余 5 个——`TensorSharp.Runtime.Logging`、`TensorSharp.AgentHost`、`TensorSharp.Chat`、`TensorSharp.Server.Host` 与 `TensorSharp.Distributed`——已可打包并通过校验，但尚未推送，将随下一个版本标签一同发布。在此之前，使用这些层仍需从源码 checkout 添加项目引用。
+其余 5 个——`TensorSharp.Runtime.Logging`、`TensorSharp.AgentHost`、`TensorSharp.Chat`、`TensorSharp.Server.Host` 与 `TensorSharp.Distributed`——已可打包并通过校验，但尚未推送。在发布渠道恢复之前，使用这些层仍需从源码 checkout 添加项目引用。
 
 | 项目 | NuGet 包 | 对外 namespace | 职责 |
 |---|---|---|---|
@@ -406,7 +406,7 @@ v3.3.0.0 已发布的归档矩阵如下：
 | `linux-x64-cuda` | GGML CUDA + 纯 C# CUDA（PTX）+ CUDA 12.x 运行时 | `.tar.gz` |
 | `osx-arm64` | GGML Metal + MLX | `.tar.gz` |
 
-- 推送 `v*` 标签会触发归档与 NuGet 工作流；只有所需 job 全部成功后才会发布产物。
+- 推送 `v*` 标签会触发归档工作流；只有所需 job 全部成功后才会发布产物。
 - `-cuda` 归档已内置 CUDA 运行时库（`cudart` / `cublas` / `cublasLt`），但运行时仍需 NVIDIA GPU 与兼容驱动；`-cpu` 归档可在任意机器运行。macOS 归档需 Apple Silicon。
 - 如需预演，可手动触发该工作流（`workflow_dispatch`）并填写 `version` 输入——它会构建全部平台并创建**草稿** Release。可用 `cuda_arch` 输入覆盖 CUDA 构建的目标 GPU 架构。
 
