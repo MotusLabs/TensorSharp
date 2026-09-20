@@ -162,7 +162,10 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python3 -m pip install --user -q -U huggingface_hub requests
+          # PEP 668: externally-managed Pythons (Debian 12+/Ubuntu 23.04+)
+          # reject pip --user unless --break-system-packages is set.
+          python3 -m pip install --user -q -U huggingface_hub requests || \
+            python3 -m pip install --user -q -U --break-system-packages huggingface_hub requests
           python3 benchmarks/engine_comparison/download_models.py \
             --config benchmarks/engine_comparison/benchmark_config_ci.json \
             --models "$BENCH_MODELS"
